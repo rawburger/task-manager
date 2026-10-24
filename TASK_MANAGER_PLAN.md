@@ -257,6 +257,19 @@ npm run format       # run Prettier
 4. Recurring tasks
 5. Reminders / due-date notifications
 6. Calendar and board (Kanban) views
-7. CSV export/import
+7. CSV export/import (Done)
 8. PWA support for offline use
-9. Dark mode
+9. Dark mode (Done)
+10. Task categories/tags (Done)
+11. Task notes/descriptions (Done)
+12. Undo/redo functionality (Done)
+13. Keyboard shortcuts (Done)
+14. Sort by due date (Done)
+15. Toast notifications (Done)
+16. Progress bar visualization (Done)
+17. Enhanced priority color coding (Done)
+18. Animations and transitions (Done)
+19. Improved empty states (Done)
+20. Data validation (duplicate prevention, date ranges) (Done)
+21. Performance optimization (virtualization for 1000+ tasks) (Done)
+22. JSON import/export (Done)

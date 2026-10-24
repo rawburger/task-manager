@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
-import { FaEdit, FaSortAmountDown, FaSortAmountUp, FaTrash, FaDownload, FaUpload, FaMoon, FaSun, FaTimes, FaCheckCircle, FaCalendarAlt } from 'react-icons/fa'
+import { FaEdit, FaSortAmountDown, FaSortAmountUp, FaTrash, FaDownload, FaUpload, FaMoon, FaSun, FaTimes, FaCheckCircle } from 'react-icons/fa'
 import './App.css'
 
 type Task = { 
@@ -16,10 +16,50 @@ type SortMode = 'id' | 'dueDate'
 type Toast = { id: number; message: string; type: 'success' | 'info' | 'error' }
 type HistoryEntry = { tasks: Task[]; timestamp: number }
 
+// Rate limiting configuration
+type RateLimitConfig = {
+  maxAttempts: number;
+  windowMs: number;
+}
+
+const RATE_LIMITS = {
+  taskOperation: { maxAttempts: 10, windowMs: 1000 },      // 10 operations per second
+  bulkOperation: { maxAttempts: 3, windowMs: 5000 },       // 3 bulk ops per 5 seconds
+  importOperation: { maxAttempts: 2, windowMs: 10000 },    // 2 imports per 10 seconds
+}
+
 const STORAGE_KEY = 'task-manager-tasks'
 const THEME_KEY = 'task-manager-theme'
 const HISTORY_KEY = 'task-manager-history'
 const MAX_HISTORY = 50
+
+// Rate limiter class
+class RateLimiter {
+  private attempts: Map<string, number[]> = new Map()
+
+  check(key: string, config: RateLimitConfig): boolean {
+    const now = Date.now()
+    const attempts = this.attempts.get(key) || []
+    
+    // Remove old attempts outside the window
+    const validAttempts = attempts.filter(timestamp => now - timestamp < config.windowMs)
+    
+    if (validAttempts.length >= config.maxAttempts) {
+      return false // Rate limit exceeded
+    }
+    
+    // Add current attempt
+    validAttempts.push(now)
+    this.attempts.set(key, validAttempts)
+    return true
+  }
+
+  reset(key: string) {
+    this.attempts.delete(key)
+  }
+}
+
+const rateLimiter = new RateLimiter()
 
 let lastId = 0
 
@@ -228,6 +268,12 @@ export default function TaskManagerApp() {
 
   // Task actions
   const add = () => {
+    // Rate limiting check
+    if (!rateLimiter.check('taskOperation', RATE_LIMITS.taskOperation)) {
+      showToast('Too many operations. Please slow down.', 'error')
+      return
+    }
+
     const titleValidation = validateTitle(input)
     if (!titleValidation.valid) {
       showToast(titleValidation.message!, 'error')
@@ -257,6 +303,11 @@ export default function TaskManagerApp() {
   }
 
   const toggle = (id: number) => {
+    if (!rateLimiter.check('taskOperation', RATE_LIMITS.taskOperation)) {
+      showToast('Too many operations. Please slow down.', 'error')
+      return
+    }
+
     const task = tasks.find(t => t.id === id)
     updateTasks(
       tasks.map(x => x.id === id ? { ...x, done: !x.done } : x),
@@ -265,15 +316,30 @@ export default function TaskManagerApp() {
   }
 
   const remove = (id: number) => {
+    if (!rateLimiter.check('taskOperation', RATE_LIMITS.taskOperation)) {
+      showToast('Too many operations. Please slow down.', 'error')
+      return
+    }
+
     updateTasks(tasks.filter(x => x.id !== id), 'Task deleted')
   }
 
   const deleteCompleted = () => {
+    if (!rateLimiter.check('bulkOperation', RATE_LIMITS.bulkOperation)) {
+      showToast('Bulk operations are rate limited. Please wait a moment.', 'error')
+      return
+    }
+
     const count = tasks.filter(t => t.done).length
     updateTasks(tasks.filter(x => !x.done), `${count} completed task${count !== 1 ? 's' : ''} deleted`)
   }
 
   const markAllDone = () => {
+    if (!rateLimiter.check('bulkOperation', RATE_LIMITS.bulkOperation)) {
+      showToast('Bulk operations are rate limited. Please wait a moment.', 'error')
+      return
+    }
+
     updateTasks(tasks.map(x => ({ ...x, done: true })), 'All tasks marked complete')
   }
 
@@ -287,6 +353,11 @@ export default function TaskManagerApp() {
   }
 
   const saveEdit = (id: number) => {
+    if (!rateLimiter.check('taskOperation', RATE_LIMITS.taskOperation)) {
+      showToast('Too many operations. Please slow down.', 'error')
+      return
+    }
+
     const titleValidation = validateTitle(editTitle, id)
     if (!titleValidation.valid) {
       showToast(titleValidation.message!, 'error')
@@ -363,13 +434,32 @@ export default function TaskManagerApp() {
   }
 
   const importJSON = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!rateLimiter.check('importOperation', RATE_LIMITS.importOperation)) {
+      showToast('Import operations are rate limited. Please wait before importing again.', 'error')
+      e.target.value = ''
+      return
+    }
+
     const file = e.target.files?.[0]
     if (!file) return
+    
+    // Check file size (limit to 5MB)
+    if (file.size > 5 * 1024 * 1024) {
+      showToast('File too large. Maximum size is 5MB.', 'error')
+      e.target.value = ''
+      return
+    }
+
     const reader = new FileReader()
     reader.onload = (event) => {
       try {
         const imported = JSON.parse(event.target?.result as string)
         if (Array.isArray(imported)) {
+          // Validate imported tasks don't exceed reasonable limits
+          if (imported.length > 10000) {
+            showToast('Too many tasks. Maximum 10,000 tasks per import.', 'error')
+            return
+          }
           updateTasks(imported, `Imported ${imported.length} tasks`)
         } else {
           showToast('Invalid JSON format', 'error')
@@ -447,7 +537,7 @@ export default function TaskManagerApp() {
       </div>
 
       <div className="header">
-        <h1>Manage Tasks</h1>
+        <h1>MANAGE TASKS</h1>
         <div className="header-actions">
           <button className="btn icon-btn" onClick={() => setDarkMode(!darkMode)} title={darkMode ? 'Light Mode' : 'Dark Mode'}>
             {darkMode ? <FaSun /> : <FaMoon />}
@@ -666,7 +756,6 @@ export default function TaskManagerApp() {
                             <span className={t.dueDate && new Date(t.dueDate) < new Date(new Date().setHours(0,0,0,0)) && !t.done ? 'overdue-date' : ''}>
                               {t.dueDate ? (
                                 <>
-                                  <FaCalendarAlt className="date-icon" />
                                   {t.dueDate}
                                 </>
                               ) : '-'}
